@@ -1,234 +1,131 @@
 # YouTube Podcast Transcript API
 
-A FastAPI backend service that retrieves transcripts from YouTube podcast videos using the `youtube-transcript-api` library.
+A Next.js app that retrieves transcripts from YouTube podcast videos, with a simple UI and Google OAuth login. Deployed on Vercel.
 
 ## Features
 
-- 🎥 Fetch transcripts from YouTube videos by video ID or URL
-- 🌍 Support for multiple languages
-- 🔄 Translation support
-- 📋 List available transcript languages for a video
-- 🚀 Fast and efficient FastAPI implementation
-- 📝 Automatic API documentation (Swagger UI)
+- Fetch transcripts from YouTube videos by video ID or URL
+- AI-powered transcript summarization using OpenAI GPT models
+- Plain text transcript export
+- Support for multiple languages
+- List available transcript languages for a video
+- Web UI with transcript viewer
+- Google OAuth authentication
 
-## Installation
+## Setup
 
-1. Clone or navigate to this directory:
+1. Install dependencies:
 ```bash
-cd podcast
+npm install
 ```
 
-2. Create a virtual environment (recommended):
-   
-   **Why use a virtual environment?**
-   - Isolates project dependencies from your system Python
-   - Prevents conflicts between different projects
-   - Makes it easier to manage package versions
-   - Keeps your system Python clean
-   
-   **Create and activate virtual environment:**
-   
-   On macOS/Linux:
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   ```
-   
-   On Windows:
-   ```bash
-   python -m venv venv
-   venv\Scripts\activate
-   ```
-   
-   You'll know it's activated when you see `(venv)` at the start of your terminal prompt.
-
-3. Install dependencies:
-```bash
-pip install -r requirements.txt
+2. Create `.env` with the following variables:
+```
+OPENAI_API_KEY=sk-...
+GOOGLE_CLIENT_ID=your_google_client_id
+GOOGLE_CLIENT_SECRET=your_google_client_secret
+NEXTAUTH_SECRET=your_random_secret
 ```
 
-**Note:** When you're done working, you can deactivate the virtual environment by running `deactivate`.
+### Google OAuth Setup
 
-## Running the Service
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project (or select existing)
+3. Navigate to **APIs & Services > Credentials**
+4. Click **Create Credentials > OAuth client ID**
+5. Choose **Web application**
+6. Add authorized redirect URI: `http://localhost:3000/api/auth/callback/google`
+7. Copy the Client ID and Client Secret into your `.env`
 
-### What is Uvicorn?
-
-**Uvicorn** is an ASGI (Asynchronous Server Gateway Interface) web server that runs your FastAPI application. Think of it as the "engine" that:
-- Listens for incoming HTTP requests
-- Routes them to your FastAPI application
-- Handles the async/await operations that FastAPI uses
-- Serves your API on a specific host and port
-- Provides auto-reload functionality during development (when using `--reload`)
-
-**Why do we need it?**
-- FastAPI is a framework, not a server
-- Uvicorn is the production-ready server that actually runs your code
-- It's optimized for async Python applications and provides excellent performance
-
-### Development Mode
-
-**Option 1: Using the main.py script**
+Generate `NEXTAUTH_SECRET` with:
 ```bash
-python main.py
+openssl rand -base64 32
 ```
 
-**Option 2: Using uvicorn directly (recommended for development)**
+3. Run the dev server:
 ```bash
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+npm run dev
 ```
 
-**Command breakdown:**
-- `main:app` - Points to the `app` object in `main.py`
-- `--reload` - Automatically restarts the server when code changes (development only)
-- `--host 0.0.0.0` - Makes the server accessible from any network interface
-- `--port 8000` - Runs on port 8000
-
-**Option 3: Production mode (no auto-reload)**
-```bash
-uvicorn main:app --host 0.0.0.0 --port 8000
-```
-
-The API will be available at:
-- **API**: http://localhost:8000
-- **Interactive API Docs (Swagger)**: http://localhost:8000/docs
-- **Alternative API Docs (ReDoc)**: http://localhost:8000/redoc
+Visit http://localhost:3000 — you'll be redirected to Google sign-in.
 
 ## API Endpoints
 
-### 1. Get Transcript
+### GET /api
+API info and available endpoints.
 
-**GET** `/transcript/{video_id_or_url}`
+### GET /api/health
+Health check endpoint (no auth required).
 
-Get the transcript for a YouTube video.
+### GET /api/transcript/{video_id_or_url}
+Get the transcript for a YouTube video with timestamps.
 
-**Parameters:**
-- `video_id_or_url` (path): YouTube video ID or full URL
-- `languages` (query, optional): Comma-separated list of language codes (e.g., `en,es,fr`)
-- `translate_to` (query, optional): Language code to translate the transcript to
-
-**Example Requests:**
-
-```bash
-# Using video ID
-curl http://localhost:8000/transcript/dQw4w9WgXcQ
-
-# Using full URL
-curl http://localhost:8000/transcript/https://www.youtube.com/watch?v=dQw4w9WgXcQ
-
-# Specify language
-curl http://localhost:8000/transcript/dQw4w9WgXcQ?languages=en
-
-# Translate to English
-curl http://localhost:8000/transcript/dQw4w9WgXcQ?translate_to=en
-```
+**Query params:**
+- `languages` — comma-separated language codes (default: `en`)
 
 **Response:**
 ```json
 {
   "video_id": "dQw4w9WgXcQ",
-  "transcript": [
-    {
-      "text": "Never gonna give you up",
-      "start": 0.0,
-      "duration": 3.5
-    },
-    ...
-  ],
+  "transcript": [{ "text": "...", "start": 0.0, "duration": 3.5 }],
   "success": true,
   "message": "Transcript retrieved successfully"
 }
 ```
 
-### 2. Get Available Languages
+### GET /api/transcript/{video_id_or_url}/text
+Get the transcript as plain text.
 
-**GET** `/transcript/{video_id_or_url}/languages`
+**Query params:**
+- `languages` — comma-separated language codes (default: `en`)
+- `separator` — string between snippets (default: space)
 
-Get a list of available transcript languages for a video.
-
-**Example Request:**
-```bash
-curl http://localhost:8000/transcript/dQw4w9WgXcQ/languages
-```
+### GET /api/transcript/{video_id_or_url}/languages
+Get available transcript languages for a video.
 
 **Response:**
 ```json
 {
   "video_id": "dQw4w9WgXcQ",
   "available_languages": [
-    {
-      "language_code": "en",
-      "language": "English",
-      "is_generated": false,
-      "is_translatable": true
-    },
-    ...
+    { "language_code": "en", "language": "English", "is_generated": false, "is_translatable": true }
   ],
   "success": true
 }
 ```
 
-### 3. Health Check
+### GET /api/transcript/{video_id_or_url}/summary
+Get an AI-generated summary of a YouTube video transcript.
 
-**GET** `/health`
+**Query params:**
+- `languages` — comma-separated language codes (default: `en`)
+- `length` — desired summary length in words, 50-1000 (default: `300`)
 
-Check if the service is running.
-
-**Example Request:**
-```bash
-curl http://localhost:8000/health
-```
-
-## Usage Examples
-
-### Python Example
-
-```python
-import requests
-
-# Get transcript
-response = requests.get("http://localhost:8000/transcript/dQw4w9WgXcQ")
-data = response.json()
-print(data["transcript"])
-
-# Get available languages
-response = requests.get("http://localhost:8000/transcript/dQw4w9WgXcQ/languages")
-languages = response.json()
-print(languages["available_languages"])
-```
-
-### JavaScript/TypeScript Example
-
-```javascript
-// Get transcript
-const response = await fetch('http://localhost:8000/transcript/dQw4w9WgXcQ');
-const data = await response.json();
-console.log(data.transcript);
-```
-
-## Error Handling
-
-The API returns appropriate HTTP status codes:
-
-- `200`: Success
-- `404`: Video not found, transcripts disabled, or no transcript available
-- `500`: Internal server error
-
-Error responses include a descriptive message:
-
+**Response:**
 ```json
 {
-  "detail": "No transcript found for video: dQw4w9WgXcQ. The video may not have transcripts available."
+  "video_id": "dQw4w9WgXcQ",
+  "summary": "...",
+  "word_count": 287,
+  "requested_length": 300,
+  "success": true,
+  "message": "Summary generated successfully"
 }
 ```
 
-## Notes
+**Note:** Requires a valid `OPENAI_API_KEY` in `.env`.
 
-- Not all YouTube videos have transcripts available
-- Some videos may have transcripts disabled by the creator
-- Generated transcripts (auto-captions) may be less accurate than manually created ones
-- The service extracts video IDs from various YouTube URL formats automatically
+## Authentication
 
-## License
+The app uses Google OAuth via NextAuth v5. The UI (`/`) and transcript API (`/api/transcript/*`) require authentication. The health check (`/api/health`) and API info (`/api`) are public.
 
-This project is open source and available for use.
+## Deployment
 
+Deploy to Vercel:
+```bash
+npx vercel
+```
+
+Set the environment variables (`OPENAI_API_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `NEXTAUTH_SECRET`) in the Vercel dashboard. Update the Google OAuth redirect URI to your production URL.
+
+**Note:** The `/api/transcript/.../summary` endpoint may exceed Vercel's free tier 10s function timeout. Vercel Pro allows 60s.

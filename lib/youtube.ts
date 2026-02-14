@@ -1,0 +1,246 @@
+import type { TranscriptSnippet, LanguageInfo } from "./types";
+
+const INNERTUBE_API_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8";
+const INNERTUBE_CLIENT_VERSION = "19.09.37";
+
+const WEB_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+export function extractVideoId(urlOrId: string): string {
+  if (/^[a-zA-Z0-9_-]{11}$/.test(urlOrId)) {
+    return urlOrId;
+  }
+
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/,
+    /youtube\.com\/watch\?.*v=([a-zA-Z0-9_-]{11})/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = urlOrId.match(pattern);
+    if (match) {
+      return match[1];
+    }
+  }
+
+  return urlOrId;
+}
+
+interface CaptionTrack {
+  baseUrl: string;
+  languageCode: string;
+  name?: { simpleText?: string };
+  kind?: string;
+}
+
+interface InnertubePlayerResponse {
+  captions?: {
+    playerCaptionsTracklistRenderer?: {
+      captionTracks?: CaptionTrack[];
+      translationLanguages?: unknown[];
+    };
+  };
+  playabilityStatus?: {
+    status?: string;
+  };
+}
+
+async function fetchInnertubePlayer(
+  videoId: string
+): Promise<InnertubePlayerResponse> {
+  const res = await fetch(
+    `https://www.youtube.com/youtubei/v1/player?key=${INNERTUBE_API_KEY}&prettyPrint=false`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        context: {
+          client: {
+            clientName: "ANDROID",
+            clientVersion: INNERTUBE_CLIENT_VERSION,
+            androidSdkVersion: 30,
+            hl: "en",
+          },
+        },
+        videoId,
+      }),
+    }
+  );
+
+  if (!res.ok) {
+    throw new Error(`YouTube innertube API error: ${res.status}`);
+  }
+
+  return res.json();
+}
+
+function getCaptionTracks(player: InnertubePlayerResponse): CaptionTrack[] {
+  return player.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? [];
+}
+
+function decodeHtmlEntities(text: string): string {
+  return text
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/\n/g, " ");
+}
+
+function parseFormat3Xml(xml: string): TranscriptSnippet[] {
+  const snippets: TranscriptSnippet[] = [];
+  const pRegex = /<p t="(\d+)" d="(\d+)"[^>]*>([\s\S]*?)<\/p>/g;
+  let match;
+
+  while ((match = pRegex.exec(xml)) !== null) {
+    const startMs = parseInt(match[1], 10);
+    const durationMs = parseInt(match[2], 10);
+    const innerHtml = match[3];
+
+    // Extract text from <s> tags within <p>, or use raw content
+    const words: string[] = [];
+    const sRegex = /<s[^>]*>([^<]*)<\/s>/g;
+    let sMatch;
+    while ((sMatch = sRegex.exec(innerHtml)) !== null) {
+      words.push(sMatch[1]);
+    }
+
+    const text =
+      words.length > 0
+        ? decodeHtmlEntities(words.join("").trim())
+        : decodeHtmlEntities(innerHtml.replace(/<[^>]+>/g, "").trim());
+
+    if (text) {
+      snippets.push({
+        text,
+        start: startMs / 1000,
+        duration: durationMs / 1000,
+      });
+    }
+  }
+
+  return snippets;
+}
+
+function parseLegacyXml(xml: string): TranscriptSnippet[] {
+  const snippets: TranscriptSnippet[] = [];
+  const regex =
+    /<text start="([^"]*)" dur="([^"]*)"[^>]*>([\s\S]*?)<\/text>/g;
+  let match;
+
+  while ((match = regex.exec(xml)) !== null) {
+    snippets.push({
+      text: decodeHtmlEntities(match[3]),
+      start: parseFloat(match[1]),
+      duration: parseFloat(match[2]),
+    });
+  }
+
+  return snippets;
+}
+
+export async function fetchTranscript(
+  videoId: string,
+  lang?: string
+): Promise<TranscriptSnippet[]> {
+  const player = await fetchInnertubePlayer(videoId);
+
+  if (player.playabilityStatus?.status === "ERROR") {
+    throw new Error(
+      `Video is unavailable: ${videoId}. The video may be private, deleted, or not exist.`
+    );
+  }
+
+  const tracks = getCaptionTracks(player);
+  if (tracks.length === 0) {
+    throw new Error(`No transcript found for video: ${videoId}`);
+  }
+
+  const targetLang = lang || "en";
+  const track =
+    tracks.find((t) => t.languageCode === targetLang) || tracks[0];
+
+  const res = await fetch(track.baseUrl);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch captions: ${res.status}`);
+  }
+
+  const xml = await res.text();
+  if (!xml) {
+    throw new Error(`Empty caption response for video: ${videoId}`);
+  }
+
+  // Detect format: format 3 uses <p> tags, legacy uses <text> tags
+  if (xml.includes('format="3"') || xml.includes("<p t=")) {
+    return parseFormat3Xml(xml);
+  }
+  return parseLegacyXml(xml);
+}
+
+export function transcriptToText(
+  transcript: TranscriptSnippet[],
+  separator = " "
+): string {
+  return transcript.map((s) => s.text).join(separator);
+}
+
+async function fetchWebPlayerResponse(videoId: string) {
+  const url = `https://www.youtube.com/watch?v=${videoId}`;
+  const res = await fetch(url, {
+    headers: {
+      "User-Agent": WEB_USER_AGENT,
+      "Accept-Language": "en-US,en;q=0.9",
+    },
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to fetch YouTube page: ${res.status}`);
+  }
+
+  const html = await res.text();
+  const playerMatch = html.match(
+    /ytInitialPlayerResponse\s*=\s*({.+?})\s*;\s*(?:var\s|<\/script>)/
+  );
+  if (!playerMatch) {
+    throw new Error("Could not find player response data");
+  }
+
+  return JSON.parse(playerMatch[1]);
+}
+
+export async function listAvailableLanguages(
+  videoId: string
+): Promise<LanguageInfo[]> {
+  // Try innertube ANDROID first, fall back to web scraping
+  let tracks: CaptionTrack[];
+  let translationLanguages: unknown[] | undefined;
+
+  const player = await fetchInnertubePlayer(videoId);
+  tracks = getCaptionTracks(player);
+  translationLanguages =
+    player.captions?.playerCaptionsTracklistRenderer?.translationLanguages;
+
+  if (tracks.length === 0) {
+    // Fallback to web scraping
+    const webPlayer = await fetchWebPlayerResponse(videoId);
+    const webCaptions = webPlayer?.captions?.playerCaptionsTracklistRenderer;
+    tracks = webCaptions?.captionTracks ?? [];
+    translationLanguages = webCaptions?.translationLanguages;
+  }
+
+  if (tracks.length === 0) {
+    return [];
+  }
+
+  const hasTranslation =
+    Array.isArray(translationLanguages) && translationLanguages.length > 0;
+
+  return tracks.map((track) => ({
+    language_code: track.languageCode,
+    language: track.name?.simpleText || track.languageCode,
+    is_generated: track.kind === "asr",
+    is_translatable: hasTranslation,
+  }));
+}
