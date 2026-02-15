@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "YouTube Transcript Viewer",
+  title: "Noesis - YouTube Video Summarizer",
 };
 
 export default function RootLayout({
